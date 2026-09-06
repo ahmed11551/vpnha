@@ -46,6 +46,9 @@ class User(Base):
         back_populates="referrer",
         cascade="all, delete-orphan",
     )
+    transactions: Mapped[List["PaymentTransaction"]] = relationship(
+        "PaymentTransaction", back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class Subscription(Base):
@@ -80,3 +83,23 @@ class Referral(Base):
     # Relationships
     referrer: Mapped["User"] = relationship("User", foreign_keys=[referrer_id], back_populates="referral_earnings")
     referee: Mapped["User"] = relationship("User", foreign_keys=[referee_id])
+
+
+class PaymentTransaction(Base):
+    __tablename__ = "payment_transactions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    order_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    gateway: Mapped[str] = mapped_column(String(32), default="cryptobot", nullable=False)  # cryptobot, stars, yookassa
+    amount: Mapped[float] = mapped_column(Float, nullable=False)
+    currency: Mapped[str] = mapped_column(String(16), default="RUB", nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True, nullable=False)  # pending, paid, expired, failed
+    external_invoice_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    pay_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    # Relationship
+    user: Mapped["User"] = relationship("User", back_populates="transactions")
+

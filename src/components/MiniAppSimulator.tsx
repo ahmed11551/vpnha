@@ -181,7 +181,44 @@ export const MiniAppSimulator: React.FC<MiniAppSimulatorProps> = ({ onEventLog }
     setActiveTab('home');
   };
 
-  const handleTopUpConfirm = () => {
+  const [selectedGateway, setSelectedGateway] = useState<'cryptobot' | 'stars' | 'card'>('cryptobot');
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+
+  const handleTopUpConfirm = async () => {
+    setIsProcessingPayment(true);
+    try {
+      // Attempt real backend invoice creation
+      const res = await fetch('/api/pay/create-invoice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          telegram_id: user.telegramId,
+          amount_rub: topUpAmount,
+          gateway: selectedGateway,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.pay_url) {
+          const tg = (window as any).Telegram?.WebApp;
+          if (tg && tg.openTelegramLink && data.pay_url.includes('t.me/')) {
+            tg.openTelegramLink(data.pay_url);
+          } else {
+            window.open(data.pay_url, '_blank');
+          }
+          setShowTopUpModal(false);
+          showToast(`Счёт создан! Перейдите к оплате в ${selectedGateway === 'cryptobot' ? '@CryptoBot' : 'платежный шлюз'}`);
+          return;
+        }
+      }
+    } catch (err) {
+      console.log('Invoice API note (using preview balance):', err);
+    } finally {
+      setIsProcessingPayment(false);
+    }
+
+    // Direct preview update if offline or standalone demo
     setUser(prev => ({ ...prev, balance: prev.balance + topUpAmount }));
     setShowTopUpModal(false);
     showToast(`✓ Баланс пополнен на +${topUpAmount} ₽!`);
@@ -725,12 +762,38 @@ export const MiniAppSimulator: React.FC<MiniAppSimulatorProps> = ({ onEventLog }
       {/* MODAL: TOP UP BALANCE */}
       {showTopUpModal && (
         <div className="absolute inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#0b0f19] border border-slate-700 rounded-3xl p-5 max-w-[310px] w-full space-y-3 shadow-2xl">
+          <div className="bg-[#0b0f19] border border-slate-700 rounded-3xl p-5 max-w-[320px] w-full space-y-3 shadow-2xl">
             <div className="flex justify-between items-center">
               <h4 className="font-bold text-white text-sm">Пополнение баланса</h4>
               <button onClick={() => setShowTopUpModal(false)} className="text-slate-400 hover:text-white text-xs">✕</button>
             </div>
-            <p className="text-[10px] text-slate-400">Выберите сумму для быстрого пополнения (карты РФ, СБП, крипта):</p>
+
+            {/* Payment Gateway Selector */}
+            <div>
+              <label className="text-[9px] text-slate-400 block mb-1">Способ оплаты:</label>
+              <div className="grid grid-cols-3 gap-1">
+                <button
+                  onClick={() => setSelectedGateway('cryptobot')}
+                  className={`py-1.5 px-1 rounded-xl text-[10px] font-medium border text-center transition-all ${selectedGateway === 'cryptobot' ? 'border-cyan-500 bg-cyan-950/40 text-cyan-300' : 'border-slate-800 bg-slate-900/60 text-slate-400'}`}
+                >
+                  💎 CryptoBot
+                </button>
+                <button
+                  onClick={() => setSelectedGateway('stars')}
+                  className={`py-1.5 px-1 rounded-xl text-[10px] font-medium border text-center transition-all ${selectedGateway === 'stars' ? 'border-amber-500 bg-amber-950/40 text-amber-300' : 'border-slate-800 bg-slate-900/60 text-slate-400'}`}
+                >
+                  ⭐ Stars
+                </button>
+                <button
+                  onClick={() => setSelectedGateway('card')}
+                  className={`py-1.5 px-1 rounded-xl text-[10px] font-medium border text-center transition-all ${selectedGateway === 'card' ? 'border-emerald-500 bg-emerald-950/40 text-emerald-300' : 'border-slate-800 bg-slate-900/60 text-slate-400'}`}
+                >
+                  💳 МИР / СБП
+                </button>
+              </div>
+            </div>
+
+            <p className="text-[10px] text-slate-400">Выберите сумму для быстрого пополнения:</p>
             <div className="grid grid-cols-3 gap-1.5">
               {[199, 499, 899].map(amt => (
                 <button
@@ -753,9 +816,14 @@ export const MiniAppSimulator: React.FC<MiniAppSimulatorProps> = ({ onEventLog }
             </div>
             <button
               onClick={handleTopUpConfirm}
-              className="w-full bg-emerald-500 hover:bg-emerald-400 text-black font-bold py-2.5 rounded-xl text-xs shadow-md transition-all active:scale-95"
+              disabled={isProcessingPayment}
+              className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:bg-slate-700 text-black font-bold py-2.5 rounded-xl text-xs shadow-md transition-all active:scale-95 flex items-center justify-center space-x-1"
             >
-              Оплатить {topUpAmount} ₽
+              {isProcessingPayment ? (
+                <span>Создание счёта...</span>
+              ) : (
+                <span>Оплатить {topUpAmount} ₽ через {selectedGateway === 'cryptobot' ? 'CryptoBot' : (selectedGateway === 'stars' ? 'Stars' : 'СБП')}</span>
+              )}
             </button>
           </div>
         </div>

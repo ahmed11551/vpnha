@@ -1,6 +1,39 @@
 version: '3.8'
 
 services:
+  # High-performance PostgreSQL 16 database
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vpn_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vpn_secure_password}
+      POSTGRES_DB: ${POSTGRES_DB:-vpn_service}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vpn_user} -d ${POSTGRES_DB:-vpn_service}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - vpn_network
+
+  # Redis 7 for caching and rate limiting
+  redis:
+    image: redis:7-alpine
+    restart: always
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - vpn_network
+
   # FastAPI Web Backend & Mini App Server
   api:
     build: .
@@ -8,13 +41,30 @@ services:
     restart: always
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-vpn_user}:${POSTGRES_PASSWORD:-vpn_secure_password}@postgres:5432/${POSTGRES_DB:-vpn_service}
     ports:
       - "8000:8000"
     volumes:
       - ./data:/app/data
       - ./frontend:/app/frontend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     networks:
       - vpn_network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
 
   # aiogram 3.x Telegram Bot
   bot:
@@ -23,12 +73,26 @@ services:
     restart: always
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-vpn_user}:${POSTGRES_PASSWORD:-vpn_secure_password}@postgres:5432/${POSTGRES_DB:-vpn_service}
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     volumes:
       - ./data:/app/data
     networks:
       - vpn_network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+volumes:
+  postgres_data:
+  redis_data:
 
 networks:
   vpn_network:

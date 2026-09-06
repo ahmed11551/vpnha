@@ -46,6 +46,14 @@ class MarzbanClient:
         self._token: Optional[str] = None
         self._token_expires_at: float = 0.0
 
+        # SSL Verification configuration
+        verify_env = os.getenv("MARZBAN_VERIFY_SSL", "true").strip().lower()
+        if verify_env in ("false", "0", "no"):
+            self.verify_ssl: Any = False
+        else:
+            ca_bundle = os.getenv("MARZBAN_CA_BUNDLE")
+            self.verify_ssl = ca_bundle if (ca_bundle and os.path.exists(ca_bundle)) else True
+
     async def _get_headers(self) -> Dict[str, str]:
         """Obtain authorization headers, refreshing token if expired."""
         token = await self.get_access_token()
@@ -68,7 +76,7 @@ class MarzbanClient:
         logger.info("Authenticating with Marzban at %s for admin '%s'", token_url, self.username)
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout, verify=False) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, verify=self.verify_ssl) as client:
                 response = await client.post(
                     token_url,
                     data={"username": self.username, "password": self.password},
@@ -103,7 +111,7 @@ class MarzbanClient:
 
         try:
             headers = await self._get_headers()
-            async with httpx.AsyncClient(timeout=self.timeout, verify=False) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, verify=self.verify_ssl) as client:
                 response = await client.get(url, headers=headers)
                 if response.status_code == 200:
                     return response.json()
@@ -154,7 +162,7 @@ class MarzbanClient:
 
         try:
             headers = await self._get_headers()
-            async with httpx.AsyncClient(timeout=self.timeout, verify=False) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, verify=self.verify_ssl) as client:
                 response = await client.post(url, json=payload, headers=headers)
                 if response.status_code in (200, 201):
                     data = response.json()
@@ -204,7 +212,7 @@ class MarzbanClient:
 
         try:
             headers = await self._get_headers()
-            async with httpx.AsyncClient(timeout=self.timeout, verify=False) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, verify=self.verify_ssl) as client:
                 response = await client.put(url, json=payload, headers=headers)
                 if response.status_code == 200:
                     data = response.json()
@@ -228,12 +236,46 @@ class MarzbanClient:
 
         try:
             headers = await self._get_headers()
-            async with httpx.AsyncClient(timeout=self.timeout, verify=False) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, verify=self.verify_ssl) as client:
                 response = await client.put(url, json={"status": "disabled"}, headers=headers)
                 return response.status_code == 200
         except httpx.RequestError as exc:
             logger.warning("Failed to disable user %s in Marzban: %s", username, exc)
             return True
+
+    async def get_nodes(self) -> List[Dict[str, Any]]:
+        """
+        Fetch cluster nodes from Marzban: GET /api/nodes.
+        Returns list of nodes with status, address, port, and usage.
+        """
+        url = f"{self.base_url}/api/nodes"
+        try:
+            headers = await self._get_headers()
+            async with httpx.AsyncClient(timeout=self.timeout, verify=self.verify_ssl) as client:
+                response = await client.get(url, headers=headers)
+                if response.status_code == 200:
+                    return response.json()
+                logger.warning("Marzban /api/nodes returned %s", response.status_code)
+                return []
+        except Exception as exc:
+            logger.warning("Failed to query Marzban /api/nodes: %s", exc)
+            return []
+
+    async def get_inbounds(self) -> Dict[str, Any]:
+        """
+        Fetch active inbounds from Marzban: GET /api/inbounds.
+        """
+        url = f"{self.base_url}/api/inbounds"
+        try:
+            headers = await self._get_headers()
+            async with httpx.AsyncClient(timeout=self.timeout, verify=self.verify_ssl) as client:
+                response = await client.get(url, headers=headers)
+                if response.status_code == 200:
+                    return response.json()
+                return {}
+        except Exception as exc:
+            logger.warning("Failed to query Marzban /api/inbounds: %s", exc)
+            return {}
 
     async def get_user_links(self, username: str) -> Dict[str, Any]:
         """

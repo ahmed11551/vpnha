@@ -30,7 +30,8 @@ from sqlalchemy import func, select
 
 from database import async_session_factory, init_db
 from marzban_client import marzban_client
-from models import Referral, Subscription, User
+from models import Referral, Subscription, User, PaymentTransaction
+from services import get_or_create_user, create_crypto_bot_invoice, send_telegram_message
 
 # Logging
 logging.basicConfig(level=logging.INFO)
@@ -99,91 +100,6 @@ def get_guides_keyboard() -> InlineKeyboardMarkup:
 
 
 # --------------------------------------------------------------------------
-# Database Helpers
-# --------------------------------------------------------------------------
-
-async def register_or_get_user(
-    telegram_id: int,
-    username: Optional[str],
-    first_name: Optional[str],
-    ref_code_arg: Optional[str] = None,
-    bot: Optional[Bot] = None,
-) -> User:
-    """Registers user in DB and links with inviter if referral code is present."""
-    async with async_session_factory() as session:
-        stmt = select(User).where(User.telegram_id == telegram_id)
-        res = await session.execute(stmt)
-        user = res.scalar_one_or_none()
-
-        if user:
-            # Update info
-            if username and user.username != username:
-                user.username = username
-            if first_name and user.first_name != first_name:
-                user.first_name = first_name
-            await session.commit()
-            return user
-
-        # Generate unique ref code
-        import secrets
-        ref_code = secrets.token_hex(4)
-        marzban_username = f"tg_{telegram_id}"
-        inviter_id = None
-        inviter_tg_id = None
-
-        if ref_code_arg:
-            clean_ref = ref_code_arg.replace("ref_", "").strip()
-            inv_stmt = select(User).where(User.ref_code == clean_ref)
-            inv_res = await session.execute(inv_stmt)
-            inviter = inv_res.scalar_one_or_none()
-            if inviter and inviter.telegram_id != telegram_id:
-                inviter_id = inviter.id
-                inviter_tg_id = inviter.telegram_id
-
-        new_user = User(
-            telegram_id=telegram_id,
-            username=username,
-            first_name=first_name,
-            balance=0.0,
-            ref_code=ref_code,
-            invited_by=inviter_id,
-            free_trial_used=False,
-            marzban_username=marzban_username,
-        )
-        session.add(new_user)
-        await session.flush()
-
-        if inviter_id:
-            ref_record = Referral(
-                referrer_id=inviter_id,
-                referee_id=new_user.id,
-                reward_amount=REFERRAL_BONUS_RUB,
-                is_paid=False,
-            )
-            session.add(ref_record)
-
-        await session.commit()
-        await session.refresh(new_user)
-
-        # Notify referrer if present
-        if inviter_tg_id and bot:
-            try:
-                name_display = f"@{username}" if username else (first_name or "Новый друг")
-                await bot.send_message(
-                    chat_id=inviter_tg_id,
-                    text=(
-                        f"🎉 <b>По вашей ссылке зарегистрировался пользователь:</b> {name_display}!\n"
-                        f"Когда он совершит первую оплату подписки, вам начислится бонус <b>{REFERRAL_BONUS_RUB:.0f} ₽</b>!"
-                    ),
-                    parse_mode=ParseMode.HTML,
-                )
-            except Exception as e:
-                logger.warning("Could not send referral notification to %s: %s", inviter_tg_id, e)
-
-        return new_user
-
-
-# --------------------------------------------------------------------------
 # Bot Message Handlers
 # --------------------------------------------------------------------------
 
@@ -201,13 +117,31 @@ async def handle_start_command(message: Message, bot: Bot):
     command_args = message.text.split(maxsplit=1)
     ref_arg = command_args[1] if len(command_args) > 1 else None
 
-    user = await register_or_get_user(
-        telegram_id=user_id,
-        username=username,
-        first_name=first_name,
-        ref_code_arg=ref_arg,
-        bot=bot,
-    )
+    async with async_session_factory() as session:
+        user, is_new = await get_or_create_user(
+            db=session,
+            telegram_id=user_id,
+            username=username,
+            first_name=first_name,
+            ref_code_arg=ref_arg,
+        )
+
+        if is_new and user.invited_by:
+            # Notify inviter
+            inviter = (await session.execute(select(User).where(User.id == user.invited_by))).scalar_one_or_none()
+            if inviter:
+                name_display = f"@{username}" if username else (first_name or "Новый друг")
+                try:
+                    await bot.send_message(
+                        chat_id=inviter.telegram_id,
+                        text=(
+                            f"🎉 <b>По вашей ссылке зарегистрировался:</b> {name_display}!\n"
+                            f"При его первой оплате подписки вы получите бонус <b>{REFERRAL_BONUS_RUB:.0f} ₽</b>!"
+                        ),
+                        parse_mode=ParseMode.HTML,
+                    )
+                except Exception as e:
+                    logger.warning("Could not send referral alert: %s", e)
 
     greeting_text = (
         f"👋 <b>Добро пожаловать в NexusVPN, {first_name}!</b>\n\n"
