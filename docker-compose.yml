@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  # FastAPI Web Backend & Mini App Server
+  api:
+    build: .
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./frontend:/app/frontend
+    networks:
+      - vpn_network
+
+  # aiogram 3.x Telegram Bot
+  bot:
+    build: .
+    command: python bot.py
+    restart: always
+    env_file:
+      - .env
+    depends_on:
+      - api
+    volumes:
+      - ./data:/app/data
+    networks:
+      - vpn_network
+
+networks:
+  vpn_network:
+    driver: bridge

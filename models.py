@@ -1,0 +1,82 @@
+"""
+SQLAlchemy ORM models for VPN commercial ecosystem:
+User, Subscription, and Referral.
+"""
+
+from datetime import datetime
+from typing import List, Optional
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+)
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+from database import Base
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True, nullable=False)
+    username: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    first_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    balance: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    ref_code: Mapped[str] = mapped_column(String(32), unique=True, index=True, nullable=False)
+    invited_by: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+    free_trial_used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    marzban_username: Mapped[Optional[str]] = mapped_column(String(64), unique=True, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Relationships
+    subscriptions: Mapped[List["Subscription"]] = relationship(
+        "Subscription", back_populates="user", cascade="all, delete-orphan"
+    )
+    invited_users: Mapped[List["User"]] = relationship(
+        "User", backref="inviter", remote_side=[id]
+    )
+    referral_earnings: Mapped[List["Referral"]] = relationship(
+        "Referral",
+        foreign_keys="[Referral.referrer_id]",
+        back_populates="referrer",
+        cascade="all, delete-orphan",
+    )
+
+
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    plan_name: Mapped[str] = mapped_column(String(64), default="Standart", nullable=False)
+    traffic_limit_bytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)  # 0 = unlimited
+    used_traffic_bytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    start_date: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    end_date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True, nullable=False)
+    subscription_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    vless_link: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Relationship
+    user: Mapped["User"] = relationship("User", back_populates="subscriptions")
+
+
+class Referral(Base):
+    __tablename__ = "referrals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    referrer_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    referee_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    reward_amount: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    is_paid: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Relationships
+    referrer: Mapped["User"] = relationship("User", foreign_keys=[referrer_id], back_populates="referral_earnings")
+    referee: Mapped["User"] = relationship("User", foreign_keys=[referee_id])

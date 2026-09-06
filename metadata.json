@@ -1,0 +1,6 @@
+{
+  "name": "NexusVPN Marzban Ecosystem",
+  "description": "Commercial VPN Platform with FastAPI backend, Marzban VLESS+Reality API integration, aiogram 3 Telegram Bot, and Telegram Mini App.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

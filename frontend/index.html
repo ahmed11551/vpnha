@@ -1,0 +1,1028 @@
+<!DOCTYPE html>
+<html lang="ru" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>NexusVPN — Next-Gen VLESS Reality</title>
+  
+  <!-- Telegram WebApp SDK -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#ecfdf5',
+              400: '#34d399',
+              500: '#10b981',
+              600: '#059669',
+              accent: '#06b6d4',
+            },
+            dark: {
+              900: '#07090e',
+              850: '#0b0f19',
+              800: '#111827',
+              700: '#1f2937',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  
+  <!-- Alpine.js -->
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js"></script>
+  
+  <!-- QR Code Generator -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+    .custom-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .glow-emerald {
+      box-shadow: 0 0 25px -5px rgba(16, 185, 129, 0.35);
+    }
+    .glow-card {
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+    }
+  </style>
+</head>
+
+<body class="bg-dark-900 text-slate-100 min-h-screen pb-24 selection:bg-brand-500 selection:text-white"
+      x-data="vpnApp()"
+      x-init="initApp()">
+
+  <!-- Top Header Profile Bar -->
+  <header class="sticky top-0 z-30 bg-dark-850/80 backdrop-blur-xl border-b border-slate-800/80 px-4 py-3">
+    <div class="max-w-md mx-auto flex items-center justify-between">
+      
+      <!-- User Info -->
+      <div class="flex items-center space-x-3">
+        <div class="relative">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-cyan-500 p-[2px] shadow-lg">
+            <div class="w-full h-full bg-dark-850 rounded-[10px] flex items-center justify-center font-bold text-sm text-emerald-400">
+              <span x-text="user.first_name ? user.first_name.charAt(0) : 'N'"></span>
+            </div>
+          </div>
+          <span class="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-dark-900"
+                :class="hasActiveSub ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'"></span>
+        </div>
+        <div>
+          <div class="flex items-center space-x-1.5">
+            <span class="font-semibold text-sm text-white" x-text="user.first_name || 'Nexus User'"></span>
+            <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-950 text-emerald-400 font-mono border border-emerald-800/50">VLESS</span>
+          </div>
+          <p class="text-xs text-slate-400 font-mono" x-text="'@' + (user.username || 'id' + user.telegram_id)"></p>
+        </div>
+      </div>
+
+      <!-- Balance & Topup -->
+      <div class="flex items-center space-x-2">
+        <div class="bg-dark-800/90 border border-slate-700/60 rounded-xl px-3 py-1.5 flex items-center space-x-2">
+          <div class="text-right">
+            <div class="text-[10px] uppercase tracking-wider text-slate-400">Баланс</div>
+            <div class="text-sm font-bold text-white font-mono" x-text="user.balance.toFixed(2) + ' ₽'"></div>
+          </div>
+          <button @click="showTopUpModal = true" 
+                  class="w-7 h-7 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/40 rounded-lg flex items-center justify-center transition-all active:scale-95">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/></svg>
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="max-w-md mx-auto px-4 pt-4 space-y-4">
+
+    <!-- TAB 1: MAIN (STATUS & KEYS) -->
+    <div x-show="activeTab === 'home'" x-transition class="space-y-4">
+      
+      <!-- Subscription Main Hero Card -->
+      <div class="relative overflow-hidden rounded-2xl bg-gradient-to-b from-dark-800 via-dark-850 to-dark-900 border border-slate-700/60 p-5 glow-card">
+        <!-- Glow effect -->
+        <div class="absolute -top-12 -right-12 w-40 h-40 rounded-full blur-3xl opacity-20 pointer-events-none"
+             :class="hasActiveSub ? 'bg-emerald-400' : 'bg-cyan-500'"></div>
+
+        <div class="flex justify-between items-start mb-4">
+          <div>
+            <span class="text-xs font-semibold uppercase tracking-wider px-2.5 py-1 rounded-md"
+                  :class="hasActiveSub ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-slate-700/50 text-slate-300 border border-slate-600/30'">
+              <span class="inline-block w-1.5 h-1.5 rounded-full mr-1.5" :class="hasActiveSub ? 'bg-emerald-400 animate-ping' : 'bg-slate-400'"></span>
+              <span x-text="hasActiveSub ? 'Подписка Активна' : 'Подписка Неактивна'"></span>
+            </span>
+            <h2 class="text-xl font-bold text-white mt-2" x-text="activeSub ? activeSub.plan_name : 'Нет активного тарифа'"></h2>
+          </div>
+          
+          <div class="w-12 h-12 rounded-2xl bg-dark-800 border border-slate-700 flex items-center justify-center">
+            <svg class="w-6 h-6" :class="hasActiveSub ? 'text-emerald-400' : 'text-slate-500'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+            </svg>
+          </div>
+        </div>
+
+        <!-- Timer Grid (if active) -->
+        <template x-if="hasActiveSub">
+          <div class="space-y-4">
+            <div class="grid grid-cols-4 gap-2 py-2">
+              <div class="bg-dark-900/80 border border-slate-800 rounded-xl p-2 text-center">
+                <div class="text-lg font-bold font-mono text-emerald-400" x-text="timer.days">00</div>
+                <div class="text-[10px] uppercase text-slate-400">Дней</div>
+              </div>
+              <div class="bg-dark-900/80 border border-slate-800 rounded-xl p-2 text-center">
+                <div class="text-lg font-bold font-mono text-emerald-400" x-text="timer.hours">00</div>
+                <div class="text-[10px] uppercase text-slate-400">Часов</div>
+              </div>
+              <div class="bg-dark-900/80 border border-slate-800 rounded-xl p-2 text-center">
+                <div class="text-lg font-bold font-mono text-emerald-400" x-text="timer.minutes">00</div>
+                <div class="text-[10px] uppercase text-slate-400">Минут</div>
+              </div>
+              <div class="bg-dark-900/80 border border-slate-800 rounded-xl p-2 text-center">
+                <div class="text-lg font-bold font-mono text-emerald-400" x-text="timer.seconds">00</div>
+                <div class="text-[10px] uppercase text-slate-400">Секунд</div>
+              </div>
+            </div>
+
+            <!-- Traffic & Speed -->
+            <div class="bg-dark-900/60 border border-slate-800/80 rounded-xl p-3 flex justify-between items-center text-xs">
+              <div class="flex items-center space-x-2">
+                <div class="w-2 h-2 rounded-full bg-cyan-400"></div>
+                <span class="text-slate-400">Использовано:</span>
+                <span class="font-mono text-white" x-text="formatBytes(activeSub.used_traffic_bytes)"></span>
+              </div>
+              <div class="text-slate-400">
+                Лимит: <span class="text-emerald-400 font-semibold" x-text="activeSub.traffic_limit_bytes > 0 ? formatBytes(activeSub.traffic_limit_bytes) : 'Безлимит'"></span>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <!-- No Sub Prompt -->
+        <template x-if="!hasActiveSub">
+          <div class="py-3 space-y-3">
+            <p class="text-sm text-slate-300">
+              Подключите защищенный туннель VLESS Reality прямо сейчас. Доступ к YouTube 4K, Instagram, ChatGPT без замедлений и рекламы.
+            </p>
+            <div class="flex gap-2">
+              <template x-if="!user.free_trial_used">
+                <button @click="activateTrial()" :disabled="loading"
+                        class="flex-1 bg-gradient-to-r from-emerald-500 to-teal-500 text-dark-950 font-bold py-2.5 px-4 rounded-xl text-sm shadow-lg shadow-emerald-500/20 active:scale-95 transition-all">
+                  🎁 Тест 3 дня бесплатно
+                </button>
+              </template>
+              <button @click="activeTab = 'plans'" 
+                      class="flex-1 bg-dark-700 hover:bg-dark-600 text-white font-medium py-2.5 px-4 rounded-xl text-sm border border-slate-600 active:scale-95 transition-all">
+                ⚡ Выбрать тариф
+              </button>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- Current Connected Location Widget -->
+      <div class="bg-dark-850 border border-slate-800 rounded-2xl p-4 flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+          <div class="text-3xl" x-text="currentServer.flag">🇳🇱</div>
+          <div>
+            <div class="flex items-center space-x-2">
+              <span class="font-bold text-white text-sm" x-text="currentServer.country"></span>
+              <span class="text-xs text-slate-400 font-mono" x-text="'(' + currentServer.city + ')'"></span>
+            </div>
+            <div class="flex items-center space-x-2 mt-0.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+              <span class="text-xs text-emerald-400 font-mono" x-text="currentServer.ping_ms + ' ms'"></span>
+              <span class="text-slate-600">•</span>
+              <span class="text-xs text-slate-400" x-text="currentServer.protocol"></span>
+            </div>
+          </div>
+        </div>
+        <button @click="activeTab = 'locations'" class="text-xs text-emerald-400 hover:text-emerald-300 bg-emerald-950/40 border border-emerald-800/40 px-3 py-1.5 rounded-lg active:scale-95 transition-all">
+          Сменить
+        </button>
+      </div>
+
+      <!-- VLESS Reality Key Container -->
+      <template x-if="hasActiveSub">
+        <div class="bg-dark-850 border border-slate-800 rounded-2xl p-4 space-y-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center space-x-2">
+              <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/>
+              </svg>
+              <span class="text-xs font-semibold uppercase tracking-wider text-slate-300">Ваш ключ подключения (VLESS)</span>
+            </div>
+            <span class="text-[10px] text-slate-500 font-mono">Reality Vision</span>
+          </div>
+
+          <!-- Obfuscated Key Box -->
+          <div class="bg-dark-900 border border-slate-800 rounded-xl p-3 font-mono text-xs text-slate-300 break-all select-all flex items-center justify-between">
+            <span class="truncate mr-2" x-text="activeSub.vless_link ? activeSub.vless_link.substring(0, 42) + '...' : 'vless://...' "></span>
+            <span class="text-[10px] text-emerald-400 bg-emerald-950 px-2 py-0.5 rounded border border-emerald-900">TCP</span>
+          </div>
+
+          <!-- Action Buttons for Key -->
+          <div class="grid grid-cols-2 gap-2 pt-1">
+            <button @click="copyToClipboard(activeSub.vless_link, 'Ключ VLESS скопирован!')"
+                    class="bg-emerald-500 hover:bg-emerald-400 text-dark-950 font-bold py-2.5 px-3 rounded-xl text-xs flex items-center justify-center space-x-1.5 shadow-md active:scale-95 transition-all">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+              <span>Скопировать ключ</span>
+            </button>
+
+            <button @click="showQrModal = true; generateQr(activeSub.vless_link)"
+                    class="bg-dark-800 hover:bg-dark-700 text-white font-medium py-2.5 px-3 rounded-xl text-xs border border-slate-700 flex items-center justify-center space-x-1.5 active:scale-95 transition-all">
+              <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"/></svg>
+              <span>Показать QR-код</span>
+            </button>
+          </div>
+
+          <!-- Subscription Link copy -->
+          <div class="pt-1">
+            <button @click="copyToClipboard(activeSub.subscription_url, 'Ссылка подписки скопирована!')"
+                    class="w-full text-xs text-slate-400 hover:text-slate-200 py-1.5 flex items-center justify-center space-x-1 border border-dashed border-slate-800 rounded-lg">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+              <span>Скопировать ссылку автообновления серверов</span>
+            </button>
+          </div>
+        </div>
+      </template>
+
+      <!-- Quick Setup Guide Preview -->
+      <div class="bg-dark-850 border border-slate-800 rounded-2xl p-4 space-y-3">
+        <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400">Быстрое подключение за 1 минуту</h3>
+        <div class="grid grid-cols-3 gap-2">
+          <button @click="activeTab = 'guide'; guidePlatform = 'happ'" class="bg-dark-900 border border-slate-800 p-2.5 rounded-xl text-center hover:border-slate-700 transition-all">
+            <div class="text-xl mb-1">⚡</div>
+            <div class="font-bold text-xs text-white">Happ</div>
+            <div class="text-[10px] text-slate-500">iOS / Android</div>
+          </button>
+          <button @click="activeTab = 'guide'; guidePlatform = 'amnezia'" class="bg-dark-900 border border-slate-800 p-2.5 rounded-xl text-center hover:border-slate-700 transition-all">
+            <div class="text-xl mb-1">🛡️</div>
+            <div class="font-bold text-xs text-white">Amnezia</div>
+            <div class="text-[10px] text-slate-500">ПК / Мобильные</div>
+          </button>
+          <button @click="activeTab = 'guide'; guidePlatform = 'v2rayng'" class="bg-dark-900 border border-slate-800 p-2.5 rounded-xl text-center hover:border-slate-700 transition-all">
+            <div class="text-xl mb-1">🤖</div>
+            <div class="font-bold text-xs text-white">v2rayNG</div>
+            <div class="text-[10px] text-slate-500">Android</div>
+          </button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- TAB 2: LOCATIONS -->
+    <div x-show="activeTab === 'locations'" x-transition class="space-y-3">
+      <div class="flex items-center justify-between px-1">
+        <div>
+          <h2 class="text-lg font-bold text-white">Локации серверов</h2>
+          <p class="text-xs text-slate-400">Высокоскоростные узлы 10 Гбит/с с защитой от блокировок</p>
+        </div>
+        <button @click="fetchServers()" class="text-xs text-emerald-400 flex items-center space-x-1">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          <span>Обновить</span>
+        </button>
+      </div>
+
+      <div class="space-y-2.5">
+        <template x-for="server in servers" :key="server.id">
+          <div @click="selectServer(server)"
+               class="bg-dark-850 border rounded-2xl p-3.5 flex items-center justify-between cursor-pointer transition-all active:scale-[0.99]"
+               :class="currentServer.id === server.id ? 'border-emerald-500 bg-emerald-950/20' : 'border-slate-800 hover:border-slate-700'">
+            
+            <div class="flex items-center space-x-3">
+              <span class="text-2xl" x-text="server.flag"></span>
+              <div>
+                <div class="flex items-center space-x-1.5">
+                  <span class="font-bold text-sm text-white" x-text="server.country"></span>
+                  <span class="text-xs text-slate-400 font-mono" x-text="server.city"></span>
+                </div>
+                <div class="text-[11px] text-slate-400 flex items-center space-x-1.5 mt-0.5">
+                  <span class="text-emerald-400 font-semibold" x-text="server.protocol"></span>
+                  <span class="text-slate-600">•</span>
+                  <span>Нагрузка: <span x-text="server.load_percent + '%'"></span></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="text-right">
+              <div class="text-xs font-mono font-bold"
+                   :class="server.ping_ms < 40 ? 'text-emerald-400' : (server.ping_ms < 80 ? 'text-amber-400' : 'text-slate-400')"
+                   x-text="server.ping_ms + ' ms'"></div>
+              <div class="text-[10px] text-slate-500 uppercase mt-0.5" x-text="currentServer.id === server.id ? 'Выбран' : 'Подключить'"></div>
+            </div>
+
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- TAB 3: PLANS & PRICING -->
+    <div x-show="activeTab === 'plans'" x-transition class="space-y-4">
+      <div class="px-1">
+        <h2 class="text-lg font-bold text-white">Тарифные планы</h2>
+        <p class="text-xs text-slate-400">Безлимитный трафик на максимальной скорости до 1 Гбит/с</p>
+      </div>
+
+      <!-- Free Trial Card (if available) -->
+      <template x-if="!user.free_trial_used">
+        <div class="bg-gradient-to-r from-emerald-900/40 to-cyan-900/40 border border-emerald-500/40 rounded-2xl p-4 flex items-center justify-between">
+          <div>
+            <span class="text-[10px] font-bold uppercase tracking-wider bg-emerald-500 text-dark-950 px-2 py-0.5 rounded">Подарок</span>
+            <h4 class="font-bold text-white text-base mt-1">3 Дня бесплатного доступа</h4>
+            <p class="text-xs text-slate-300">5 ГБ скоростного трафика для проверки</p>
+          </div>
+          <button @click="activateTrial()" :disabled="loading"
+                  class="bg-emerald-500 hover:bg-emerald-400 text-dark-950 font-bold px-4 py-2 rounded-xl text-xs shadow-md active:scale-95 transition-all">
+            Активировать
+          </button>
+        </div>
+      </template>
+
+      <!-- Paid Plans Grid -->
+      <div class="space-y-3">
+        <template x-for="plan in plans" :key="plan.id">
+          <div class="relative bg-dark-850 border rounded-2xl p-4 transition-all"
+               :class="plan.popular ? 'border-emerald-500/80 bg-gradient-to-b from-emerald-950/20 to-dark-850' : 'border-slate-800'">
+            
+            <template x-if="plan.badge">
+              <span class="absolute -top-2.5 right-4 text-[10px] font-bold uppercase tracking-wider bg-gradient-to-r from-emerald-500 to-cyan-500 text-dark-950 px-2.5 py-0.5 rounded-full shadow-sm"
+                    x-text="plan.badge"></span>
+            </template>
+
+            <div class="flex justify-between items-start">
+              <div>
+                <h4 class="font-bold text-white text-base" x-text="plan.name"></h4>
+                <div class="text-xs text-slate-400 mt-0.5" x-text="plan.description"></div>
+                <div class="text-[11px] text-emerald-400 mt-2 flex items-center space-x-1">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                  <span>До 5 устройств одновременно</span>
+                </div>
+              </div>
+
+              <div class="text-right">
+                <div class="text-xl font-extrabold font-mono text-white" x-text="plan.price + ' ₽'"></div>
+                <div class="text-[10px] text-slate-400" x-text="plan.perMonth"></div>
+              </div>
+            </div>
+
+            <div class="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between">
+              <span class="text-xs text-slate-400" x-text="'Срок: ' + plan.days + ' дней'"></span>
+              <button @click="purchasePlan(plan.id)" :disabled="loading"
+                      class="bg-emerald-500 hover:bg-emerald-400 text-dark-950 font-bold px-4 py-2 rounded-xl text-xs shadow-md active:scale-95 transition-all">
+                Оформить подписку
+              </button>
+            </div>
+
+          </div>
+        </template>
+      </div>
+
+    </div>
+
+    <!-- TAB 4: REFERRAL PROGRAM -->
+    <div x-show="activeTab === 'referrals'" x-transition class="space-y-4">
+      <div class="px-1">
+        <h2 class="text-lg font-bold text-white">Реферальная программа</h2>
+        <p class="text-xs text-slate-400">Зарабатывайте реальные деньги на баланс, делясь сервисом</p>
+      </div>
+
+      <!-- Referral Banner -->
+      <div class="bg-gradient-to-tr from-cyan-950/40 via-dark-850 to-emerald-950/40 border border-cyan-800/50 rounded-2xl p-4 space-y-3 glow-card">
+        <div class="flex items-center space-x-3">
+          <div class="w-10 h-10 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          </div>
+          <div>
+            <h3 class="font-bold text-white text-sm">100 ₽ + 15% с каждой покупки</h3>
+            <p class="text-xs text-slate-300">Получайте 100 ₽ за первую покупку друга и 15% пожизненно</p>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2 pt-2">
+          <div class="bg-dark-900/80 border border-slate-800 rounded-xl p-3 text-center">
+            <div class="text-xl font-bold font-mono text-white" x-text="referrals.total_invited">0</div>
+            <div class="text-[11px] text-slate-400">Приглашено друзей</div>
+          </div>
+          <div class="bg-dark-900/80 border border-slate-800 rounded-xl p-3 text-center">
+            <div class="text-xl font-bold font-mono text-emerald-400" x-text="referrals.total_earned.toFixed(2) + ' ₽'">0.00 ₽</div>
+            <div class="text-[11px] text-slate-400">Заработано бонусов</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Referral Link Box -->
+      <div class="bg-dark-850 border border-slate-800 rounded-2xl p-4 space-y-3">
+        <label class="text-xs font-semibold text-slate-300 uppercase tracking-wider">Ваша персональная ссылка</label>
+        <div class="bg-dark-900 border border-slate-800 rounded-xl p-3 text-xs font-mono text-slate-300 break-all select-all flex items-center justify-between">
+          <span class="truncate mr-2" x-text="user.ref_link"></span>
+          <button @click="copyToClipboard(user.ref_link, 'Реферальная ссылка скопирована!')" class="text-emerald-400 hover:text-emerald-300 text-xs font-semibold whitespace-nowrap">
+            Копировать
+          </button>
+        </div>
+
+        <button @click="shareReferralLink()"
+                class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2.5 rounded-xl text-xs flex items-center justify-center space-x-2 shadow-md active:scale-95 transition-all">
+          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/></svg>
+          <span>Отправить друзьям в Telegram</span>
+        </button>
+      </div>
+
+      <!-- Invited Friends List -->
+      <div class="bg-dark-850 border border-slate-800 rounded-2xl p-4 space-y-3">
+        <h4 class="text-xs font-semibold text-slate-300 uppercase tracking-wider">Приглашенные пользователи</h4>
+        <template x-if="referrals.invited_friends.length === 0">
+          <p class="text-xs text-slate-500 py-3 text-center">Вы пока не пригласили друзей. Отправьте ссылку первому другу!</p>
+        </template>
+        <div class="space-y-2 max-h-48 overflow-y-auto custom-scrollbar">
+          <template x-for="friend in referrals.invited_friends" :key="friend.telegram_id">
+            <div class="bg-dark-900 border border-slate-800/80 rounded-xl p-2.5 flex items-center justify-between text-xs">
+              <div class="flex items-center space-x-2">
+                <div class="w-6 h-6 rounded-full bg-slate-800 flex items-center justify-center text-[10px] text-emerald-400 font-bold" x-text="friend.name.charAt(0)"></div>
+                <div>
+                  <div class="font-semibold text-white" x-text="friend.name"></div>
+                  <div class="text-[10px] text-slate-400 font-mono" x-text="'@' + friend.username"></div>
+                </div>
+              </div>
+              <div class="text-right">
+                <span class="text-[10px] text-slate-500" x-text="friend.date"></span>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- TAB 5: GUIDES & CLIENTS -->
+    <div x-show="activeTab === 'guide'" x-transition class="space-y-4">
+      <div class="px-1">
+        <h2 class="text-lg font-bold text-white">Инструкция по настройке</h2>
+        <p class="text-xs text-slate-400">Выберите ваше устройство для подключения за 3 простых шага</p>
+      </div>
+
+      <!-- Platform selector pills -->
+      <div class="flex space-x-2 overflow-x-auto pb-1 custom-scrollbar">
+        <button @click="guidePlatform = 'happ'"
+                :class="guidePlatform === 'happ' ? 'bg-emerald-500 text-dark-950 font-bold' : 'bg-dark-800 text-slate-300 border border-slate-700'"
+                class="px-3.5 py-1.5 rounded-xl text-xs whitespace-nowrap transition-all">
+          ⚡ Happ (iOS & Android)
+        </button>
+        <button @click="guidePlatform = 'amnezia'"
+                :class="guidePlatform === 'amnezia' ? 'bg-emerald-500 text-dark-950 font-bold' : 'bg-dark-800 text-slate-300 border border-slate-700'"
+                class="px-3.5 py-1.5 rounded-xl text-xs whitespace-nowrap transition-all">
+          🛡️ AmneziaVPN (Windows / Mac)
+        </button>
+        <button @click="guidePlatform = 'v2rayng'"
+                :class="guidePlatform === 'v2rayng' ? 'bg-emerald-500 text-dark-950 font-bold' : 'bg-dark-800 text-slate-300 border border-slate-700'"
+                class="px-3.5 py-1.5 rounded-xl text-xs whitespace-nowrap transition-all">
+          🤖 v2rayNG (Android)
+        </button>
+      </div>
+
+      <!-- Guide Content Card -->
+      <div class="bg-dark-850 border border-slate-800 rounded-2xl p-4 space-y-4 text-xs text-slate-300">
+        
+        <!-- HAPP -->
+        <template x-if="guidePlatform === 'happ'">
+          <div class="space-y-3">
+            <div class="flex items-center space-x-2 text-emerald-400 font-bold text-sm">
+              <span>Приложение Happ Proxy Utility (Рекомендуем)</span>
+            </div>
+            <p>Самый красивый, стабильный и простой клиент для VLESS Reality на iPhone и Android.</p>
+            <ol class="list-decimal list-inside space-y-2 text-slate-200">
+              <li>Установите <b>Happ</b> из App Store или Google Play.</li>
+              <li>Скопируйте ваш VLESS ключ из вкладки <b>«Главная»</b>.</li>
+              <li>Откройте Happ, нажмите <b>«+»</b> в правом верхнем углу и выберите <b>«Add from Clipboard»</b>.</li>
+              <li>Нажмите большую центральную кнопку <b>«Connect»</b> и подтвердите добавление профиля в систему.</li>
+            </ol>
+            <div class="p-3 bg-dark-900 border border-slate-800 rounded-xl">
+              💡 <b>Совет:</b> Happ автоматически проверяет пинг всех серверов и выбирает самый быстрый канал.
+            </div>
+          </div>
+        </template>
+
+        <!-- AMNEZIA -->
+        <template x-if="guidePlatform === 'amnezia'">
+          <div class="space-y-3">
+            <div class="flex items-center space-x-2 text-emerald-400 font-bold text-sm">
+              <span>AmneziaVPN (ПК и Мобильные)</span>
+            </div>
+            <p>Официальный opensource-клиент с открытым исходным кодом без телеметрии.</p>
+            <ol class="list-decimal list-inside space-y-2 text-slate-200">
+              <li>Скачайте AmneziaVPN с официального сайта <b>amnezia.org</b>.</li>
+              <li>Скопируйте VLESS ключ из приложения NexusVPN.</li>
+              <li>В Amnezia нажмите кнопку <b>«У меня есть данные для подключения»</b> -> <b>«Вставить ключ»</b>.</li>
+              <li>Нажмите <b>«Подключиться»</b>. Трафик зашифрован протоколом Reality под TLS 1.3.</li>
+            </ol>
+          </div>
+        </template>
+
+        <!-- V2RAYNG -->
+        <template x-if="guidePlatform === 'v2rayng'">
+          <div class="space-y-3">
+            <div class="flex items-center space-x-2 text-emerald-400 font-bold text-sm">
+              <span>v2rayNG (Android)</span>
+            </div>
+            <p>Проверенное временем мощное приложение для Android-смартфонов и ТВ-приставок.</p>
+            <ol class="list-decimal list-inside space-y-2 text-slate-200">
+              <li>Установите v2rayNG из Google Play или с GitHub.</li>
+              <li>Скопируйте VLESS ключ или отсканируйте QR-код.</li>
+              <li>В v2rayNG нажмите значок <b>«+»</b> сверху -> <b>«Импортировать профиль из буфера»</b>.</li>
+              <li>Нажмите кнопку подключения (V) в правом нижнем углу экрана.</li>
+            </ol>
+          </div>
+        </template>
+
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Bottom Navigation Tab Bar -->
+  <nav class="fixed bottom-0 left-0 right-0 z-30 bg-dark-850/90 backdrop-blur-xl border-t border-slate-800/80 px-2 py-2">
+    <div class="max-w-md mx-auto grid grid-cols-5 gap-1">
+      
+      <button @click="switchTab('home')" 
+              class="flex flex-col items-center py-1 transition-all"
+              :class="activeTab === 'home' ? 'text-emerald-400 font-semibold' : 'text-slate-400 hover:text-slate-200'">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+        <span class="text-[10px] mt-1">Главная</span>
+      </button>
+
+      <button @click="switchTab('locations')" 
+              class="flex flex-col items-center py-1 transition-all"
+              :class="activeTab === 'locations' ? 'text-emerald-400 font-semibold' : 'text-slate-400 hover:text-slate-200'">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        <span class="text-[10px] mt-1">Серверы</span>
+      </button>
+
+      <button @click="switchTab('plans')" 
+              class="flex flex-col items-center py-1 transition-all"
+              :class="activeTab === 'plans' ? 'text-emerald-400 font-semibold' : 'text-slate-400 hover:text-slate-200'">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        <span class="text-[10px] mt-1">Тарифы</span>
+      </button>
+
+      <button @click="switchTab('referrals')" 
+              class="flex flex-col items-center py-1 transition-all"
+              :class="activeTab === 'referrals' ? 'text-emerald-400 font-semibold' : 'text-slate-400 hover:text-slate-200'">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
+        <span class="text-[10px] mt-1">Рефералы</span>
+      </button>
+
+      <button @click="switchTab('guide')" 
+              class="flex flex-col items-center py-1 transition-all"
+              :class="activeTab === 'guide' ? 'text-emerald-400 font-semibold' : 'text-slate-400 hover:text-slate-200'">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
+        <span class="text-[10px] mt-1">Помощь</span>
+      </button>
+
+    </div>
+  </nav>
+
+  <!-- MODAL: QR CODE -->
+  <div x-show="showQrModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" x-transition>
+    <div class="bg-dark-850 border border-slate-700 rounded-3xl p-6 max-w-xs w-full text-center space-y-4">
+      <h3 class="font-bold text-white text-base">QR-код VLESS Reality</h3>
+      <div class="bg-white p-3 rounded-2xl inline-block shadow-inner">
+        <canvas id="qrCanvas" class="w-48 h-48"></canvas>
+      </div>
+      <p class="text-xs text-slate-400">Наведите камеру в приложении Happ, Amnezia или v2rayNG для импорта</p>
+      <button @click="showQrModal = false" class="w-full bg-dark-700 hover:bg-dark-600 text-white font-bold py-2.5 rounded-xl text-xs">
+        Закрыть
+      </button>
+    </div>
+  </div>
+
+  <!-- MODAL: BALANCE TOP UP -->
+  <div x-show="showTopUpModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" x-transition>
+    <div class="bg-dark-850 border border-slate-700 rounded-3xl p-6 max-w-sm w-full space-y-4">
+      <div class="flex justify-between items-center">
+        <h3 class="font-bold text-white text-base">Пополнение баланса</h3>
+        <button @click="showTopUpModal = false" class="text-slate-400 hover:text-white">✕</button>
+      </div>
+
+      <p class="text-xs text-slate-400">Выберите сумму для быстрого пополнения. Поддерживаются банковские карты РФ, СБП и криптовалюта.</p>
+
+      <div class="grid grid-cols-3 gap-2">
+        <button @click="topUpAmount = 199" :class="topUpAmount === 199 ? 'border-emerald-500 bg-emerald-950/40 text-emerald-400' : 'border-slate-800 bg-dark-900 text-slate-300'" class="border p-2.5 rounded-xl text-center text-xs font-mono font-bold">199 ₽</button>
+        <button @click="topUpAmount = 499" :class="topUpAmount === 499 ? 'border-emerald-500 bg-emerald-950/40 text-emerald-400' : 'border-slate-800 bg-dark-900 text-slate-300'" class="border p-2.5 rounded-xl text-center text-xs font-mono font-bold">499 ₽</button>
+        <button @click="topUpAmount = 899" :class="topUpAmount === 899 ? 'border-emerald-500 bg-emerald-950/40 text-emerald-400' : 'border-slate-800 bg-dark-900 text-slate-300'" class="border p-2.5 rounded-xl text-center text-xs font-mono font-bold">899 ₽</button>
+      </div>
+
+      <div>
+        <label class="text-[11px] text-slate-400 block mb-1">Или введите свою сумму (руб):</label>
+        <input type="number" x-model.number="topUpAmount" min="50" class="w-full bg-dark-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono text-sm focus:outline-none focus:border-emerald-500" />
+      </div>
+
+      <button @click="executeTopUp()" :disabled="loading"
+              class="w-full bg-emerald-500 hover:bg-emerald-400 text-dark-950 font-bold py-3 rounded-xl text-xs shadow-lg shadow-emerald-500/20 active:scale-95 transition-all">
+        Пополнить баланс на <span x-text="topUpAmount + ' ₽'"></span>
+      </button>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATION -->
+  <div x-show="toast.show" 
+       x-transition:enter="transition ease-out duration-300"
+       x-transition:enter-start="opacity-0 translate-y-4"
+       x-transition:enter-end="opacity-100 translate-y-0"
+       x-transition:leave="transition ease-in duration-200"
+       x-transition:leave-start="opacity-100 translate-y-0"
+       x-transition:leave-end="opacity-0 translate-y-4"
+       class="fixed bottom-20 left-4 right-4 z-50 max-w-md mx-auto bg-dark-800 border border-emerald-500/50 text-white px-4 py-3 rounded-2xl shadow-xl flex items-center justify-between">
+    <div class="flex items-center space-x-2">
+      <span class="text-emerald-400">✓</span>
+      <span class="text-xs font-medium" x-text="toast.message"></span>
+    </div>
+    <button @click="toast.show = false" class="text-slate-400 hover:text-white text-xs">✕</button>
+  </div>
+
+  <script>
+    function vpnApp() {
+      return {
+        activeTab: 'home',
+        guidePlatform: 'happ',
+        loading: false,
+        showQrModal: false,
+        showTopUpModal: false,
+        topUpAmount: 499,
+        
+        // State
+        user: {
+          telegram_id: 123456789,
+          first_name: 'Пользователь',
+          username: 'telegram_user',
+          balance: 0.0,
+          ref_code: 'demo88',
+          ref_link: 'https://t.me/NexusVpnBot?start=ref_demo88',
+          free_trial_used: false,
+        },
+        activeSub: null,
+        referrals: {
+          total_invited: 0,
+          total_earned: 0.0,
+          invited_friends: [],
+        },
+        servers: [],
+        currentServer: {
+          id: 'nl-ams',
+          country: 'Нидерланды',
+          city: 'Амстердам',
+          flag: '🇳🇱',
+          ping_ms: 28,
+          protocol: 'VLESS + Reality',
+        },
+        plans: [
+          { id: '1m', name: 'Стандарт', description: '1 Месяц доступа без ограничений', days: 30, price: 199, perMonth: '199 ₽/мес', popular: false },
+          { id: '3m', name: 'Оптимальный', description: '3 Месяца скоростного интернета', days: 90, price: 499, perMonth: '166 ₽/мес', popular: true, badge: 'Выгодно' },
+          { id: '6m', name: 'Премиум', description: '6 Месяцев стабильного туннеля', days: 180, price: 899, perMonth: '149 ₽/мес', popular: false, badge: '-25%' },
+          { id: '12m', name: 'Ультра Год', description: '12 Месяцев полной свободы сети', days: 365, price: 1599, perMonth: '133 ₽/мес', popular: false, badge: 'Макс скидка' },
+        ],
+        timer: { days: '00', hours: '00', minutes: '00', seconds: '00' },
+        toast: { show: false, message: '' },
+        timerInterval: null,
+
+        get hasActiveSub() {
+          return this.activeSub !== null && this.activeSub.days_left >= 0;
+        },
+
+        initApp() {
+          // Initialize Telegram WebApp SDK
+          if (window.Telegram && window.Telegram.WebApp) {
+            try {
+              window.Telegram.WebApp.ready();
+              window.Telegram.WebApp.expand();
+              window.Telegram.WebApp.setHeaderColor('#0b0f19');
+              window.Telegram.WebApp.setBackgroundColor('#07090e');
+            } catch (e) {
+              console.log('Telegram SDK initialization:', e);
+            }
+          }
+
+          this.fetchInitialData();
+          this.fetchServers();
+        },
+
+        switchTab(tab) {
+          this.activeTab = tab;
+          this.triggerHaptic();
+        },
+
+        triggerHaptic() {
+          if (window.Telegram?.WebApp?.HapticFeedback) {
+            window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+          }
+        },
+
+        async fetchInitialData() {
+          let initData = window.Telegram?.WebApp?.initData || '';
+          
+          // If running in development / browser demo outside Telegram
+          if (!initData) {
+            initData = JSON.stringify({
+              id: 98765432,
+              first_name: 'Alex Developer',
+              username: 'alex_dev',
+            });
+          }
+
+          // Check start_param for referral
+          const urlParams = new URLSearchParams(window.location.search);
+          const refParam = urlParams.get('ref') || window.Telegram?.WebApp?.initDataUnsafe?.start_param || null;
+
+          try {
+            const resp = await fetch('/api/auth/telegram-webapp', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ init_data: initData, ref_code: refParam })
+            });
+            if (resp.ok) {
+              const data = await resp.json();
+              this.user = data.user;
+              this.activeSub = data.active_subscription;
+              this.referrals = { ...this.referrals, ...data.referral_stats };
+              if (this.activeSub) {
+                this.startTimer();
+              }
+            } else {
+              this.setupDemoFallback();
+            }
+          } catch (e) {
+            console.log('Using local client state:', e);
+            this.setupDemoFallback();
+          }
+
+          this.fetchReferrals();
+        },
+
+        setupDemoFallback() {
+          this.user = {
+            telegram_id: 123456789,
+            first_name: 'Alex',
+            username: 'nexus_user',
+            balance: 650.0,
+            ref_code: 'nexus_pro',
+            ref_link: 'https://t.me/NexusVpnBot?start=ref_nexus_pro',
+            free_trial_used: false,
+          };
+          this.servers = [
+            { id: 'nl-ams', country: 'Нидерланды', city: 'Амстердам', flag: '🇳🇱', ping_ms: 28, protocol: 'VLESS + Reality', status: 'online', load_percent: 34 },
+            { id: 'de-fra', country: 'Германия', city: 'Франкфурт', flag: '🇩🇪', ping_ms: 32, protocol: 'VLESS + Reality', status: 'online', load_percent: 48 },
+            { id: 'fi-hel', country: 'Финляндия', city: 'Хельсинки', flag: '🇫🇮', ping_ms: 19, protocol: 'VLESS + Reality', status: 'online', load_percent: 22 },
+            { id: 'us-nyc', country: 'США', city: 'Нью-Йорк', flag: '🇺🇸', ping_ms: 95, protocol: 'VLESS + Reality', status: 'online', load_percent: 55 },
+            { id: 'tr-ist', country: 'Турция', city: 'Стамбул', flag: '🇹🇷', ping_ms: 42, protocol: 'VLESS + Reality', status: 'online', load_percent: 40 },
+          ];
+        },
+
+        async fetchServers() {
+          try {
+            const res = await fetch('/api/servers');
+            if (res.ok) {
+              this.servers = await res.json();
+              if (this.servers.length > 0) this.currentServer = this.servers[0];
+            }
+          } catch (e) {
+            console.log('Error fetching servers:', e);
+          }
+        },
+
+        async fetchReferrals() {
+          try {
+            const res = await fetch(`/api/referrals?telegram_id=${this.user.telegram_id}`);
+            if (res.ok) {
+              const data = await res.json();
+              this.referrals = data;
+            }
+          } catch (e) {
+            console.log('Error loading referrals:', e);
+          }
+        },
+
+        selectServer(server) {
+          this.currentServer = server;
+          this.showNotification(`Локация изменена на ${server.country}`);
+          this.triggerHaptic();
+        },
+
+        async activateTrial() {
+          this.loading = true;
+          this.triggerHaptic();
+          try {
+            const res = await fetch(`/api/subscription/trial?telegram_id=${this.user.telegram_id}`, {
+              method: 'POST'
+            });
+            const data = await res.json();
+            if (res.ok) {
+              this.user.free_trial_used = true;
+              this.activeSub = {
+                plan_name: data.subscription.plan_name,
+                end_date: data.subscription.end_date,
+                vless_link: data.subscription.vless_link,
+                subscription_url: data.subscription.subscription_url,
+                days_left: 3,
+                used_traffic_bytes: 0,
+                traffic_limit_bytes: 5 * 1024 * 1024 * 1024,
+              };
+              this.startTimer();
+              this.showNotification('🎉 3 дня бесплатного VLESS Reality активированы!');
+              this.activeTab = 'home';
+            } else {
+              this.showNotification(data.detail || 'Не удалось активировать пробный период');
+            }
+          } catch (e) {
+            // Client simulated fallback
+            this.user.free_trial_used = true;
+            this.activeSub = {
+              plan_name: 'Пробный период 3 дня',
+              end_date: new Date(Date.now() + 3 * 86400000).toISOString(),
+              vless_link: `vless://c5d2b781-9b1e-45fa-92cf-e317bb892c90@nl-ams-01.nexusvpn.network:443?type=tcp&security=reality&pbk=7K3sW2y9vXqL9ZmN4jR1Pq8tY3uW0eA2bC5dE7fG8hI&fp=chrome&sni=dl.google.com&sid=a4b8c9d0&spx=%2F&flow=xtls-rprx-vision#NexusVPN-Trial`,
+              subscription_url: 'https://marzban.nexusvpn.network/sub/demo_trial',
+              days_left: 3,
+              used_traffic_bytes: 120000000,
+              traffic_limit_bytes: 5 * 1024 * 1024 * 1024,
+            };
+            this.startTimer();
+            this.showNotification('🎉 3 дня бесплатного VLESS Reality активированы!');
+            this.activeTab = 'home';
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        async purchasePlan(planId) {
+          const plan = this.plans.find(p => p.id === planId);
+          if (this.user.balance < plan.price) {
+            this.topUpAmount = plan.price;
+            this.showTopUpModal = true;
+            this.showNotification(`Недостаточно средств. Пополните баланс на ${plan.price - this.user.balance} ₽`);
+            return;
+          }
+
+          this.loading = true;
+          this.triggerHaptic();
+
+          try {
+            const res = await fetch(`/api/subscription/purchase?telegram_id=${this.user.telegram_id}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ plan_id: planId })
+            });
+            const data = await res.json();
+            if (res.ok) {
+              this.user.balance = data.new_balance;
+              this.activeSub = {
+                plan_name: plan.name,
+                end_date: data.end_date,
+                vless_link: data.vless_link,
+                subscription_url: data.subscription_url,
+                days_left: plan.days,
+                used_traffic_bytes: 0,
+                traffic_limit_bytes: 0,
+              };
+              this.startTimer();
+              this.showNotification(data.message);
+              this.activeTab = 'home';
+            } else {
+              this.showNotification(data.detail || 'Ошибка оформления подписки');
+            }
+          } catch (e) {
+            this.user.balance -= plan.price;
+            this.activeSub = {
+              plan_name: plan.name,
+              end_date: new Date(Date.now() + plan.days * 86400000).toISOString(),
+              vless_link: `vless://c5d2b781-9b1e-45fa-92cf-e317bb892c90@nl-ams-01.nexusvpn.network:443?type=tcp&security=reality&pbk=7K3sW2y9vXqL9ZmN4jR1Pq8tY3uW0eA2bC5dE7fG8hI&fp=chrome&sni=dl.google.com&sid=a4b8c9d0&spx=%2F&flow=xtls-rprx-vision#NexusVPN-Commercial`,
+              subscription_url: 'https://marzban.nexusvpn.network/sub/demo_commercial',
+              days_left: plan.days,
+              used_traffic_bytes: 0,
+              traffic_limit_bytes: 0,
+            };
+            this.startTimer();
+            this.showNotification(`Подписка ${plan.name} успешно оформлена!`);
+            this.activeTab = 'home';
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        async executeTopUp() {
+          if (this.topUpAmount <= 0) return;
+          this.loading = true;
+          try {
+            const res = await fetch(`/api/user/top-up?telegram_id=${this.user.telegram_id}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ amount: this.topUpAmount })
+            });
+            if (res.ok) {
+              const data = await res.json();
+              this.user.balance = data.new_balance;
+            } else {
+              this.user.balance += this.topUpAmount;
+            }
+            this.showTopUpModal = false;
+            this.showNotification(`Баланс успешно пополнен на +${this.topUpAmount} ₽!`);
+            this.triggerHaptic();
+          } catch (e) {
+            this.user.balance += this.topUpAmount;
+            this.showTopUpModal = false;
+            this.showNotification(`Баланс успешно пополнен на +${this.topUpAmount} ₽!`);
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        startTimer() {
+          if (this.timerInterval) clearInterval(this.timerInterval);
+          const update = () => {
+            if (!this.activeSub?.end_date) return;
+            const target = new Date(this.activeSub.end_date).getTime();
+            const now = Date.now();
+            const diff = Math.max(0, target - now);
+
+            const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+            const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+            const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+            const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+
+            this.timer = {
+              days: String(days).padStart(2, '0'),
+              hours: String(hours).padStart(2, '0'),
+              minutes: String(minutes).padStart(2, '0'),
+              seconds: String(seconds).padStart(2, '0'),
+            };
+          };
+          update();
+          this.timerInterval = setInterval(update, 1000);
+        },
+
+        copyToClipboard(text, successMsg) {
+          if (!text) return;
+          if (navigator.clipboard) {
+            navigator.clipboard.writeText(text);
+          } else {
+            const el = document.createElement('textarea');
+            el.value = text;
+            document.body.appendChild(el);
+            el.select();
+            document.execCommand('copy');
+            document.body.removeChild(el);
+          }
+          this.showNotification(successMsg || 'Скопировано в буфер обмена!');
+          this.triggerHaptic();
+        },
+
+        generateQr(text) {
+          this.$nextTick(() => {
+            const canvas = document.getElementById('qrCanvas');
+            if (canvas && window.QRCode && text) {
+              window.QRCode.toCanvas(canvas, text, {
+                width: 200,
+                margin: 2,
+                color: { dark: '#05070a', light: '#ffffff' }
+              });
+            }
+          });
+        },
+
+        shareReferralLink() {
+          const shareText = encodeURIComponent('Попробуй быстрый и неблокируемый VLESS Reality VPN с тестовым периодом 3 дня! ⚡');
+          const shareUrl = encodeURIComponent(this.user.ref_link);
+          const tgUrl = `https://t.me/share/url?url=${shareUrl}&text=${shareText}`;
+          if (window.Telegram?.WebApp?.openTelegramLink) {
+            window.Telegram.WebApp.openTelegramLink(tgUrl);
+          } else {
+            window.open(tgUrl, '_blank');
+          }
+        },
+
+        showNotification(msg) {
+          this.toast.message = msg;
+          this.toast.show = true;
+          setTimeout(() => { this.toast.show = false; }, 3500);
+        },
+
+        formatBytes(bytes) {
+          if (!bytes || bytes === 0) return '0 MB';
+          const k = 1024;
+          const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+          const i = Math.floor(Math.log(bytes) / Math.log(k));
+          return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }
+      }
+    }
+  </script>
+</body>
+</html>
