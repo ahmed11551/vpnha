@@ -3,7 +3,6 @@ Database connection and session management using SQLAlchemy 2.0 (async).
 Supports SQLite (aiosqlite) and PostgreSQL (asyncpg).
 """
 
-import os
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -12,11 +11,9 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase
+from config import settings
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "sqlite+aiosqlite:///./vpn_service.db"
-)
+DATABASE_URL = settings.DATABASE_URL
 
 # SQLite needs connect_args check_same_thread=False
 connect_args = {}
@@ -25,7 +22,7 @@ if DATABASE_URL.startswith("sqlite"):
 
 engine: AsyncEngine = create_async_engine(
     DATABASE_URL,
-    echo=os.getenv("SQL_DEBUG", "false").lower() == "true",
+    echo=settings.SQL_DEBUG,
     future=True,
     connect_args=connect_args,
 )

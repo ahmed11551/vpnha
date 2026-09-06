@@ -16,12 +16,13 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qsl
 
 from fastapi import HTTPException, Request, status
+from config import settings
 
 logger = logging.getLogger("NexusVPN-Security")
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "123456789:ABCdefGHIjklMNOpqrSTUvwxYZ")
-ALLOW_INSECURE_TEST_AUTH = os.getenv("ALLOW_INSECURE_TEST_AUTH", "false").strip().lower() in ("true", "1", "yes")
-MAX_AUTH_AGE_SECONDS = 86400  # 24 hours max token age to prevent replay attacks
+BOT_TOKEN = settings.BOT_TOKEN
+ALLOW_INSECURE_TEST_AUTH = settings.ALLOW_INSECURE_TEST_AUTH
+MAX_AUTH_AGE_SECONDS = settings.MAX_AUTH_AGE_SECONDS
 
 
 # --------------------------------------------------------------------------
@@ -138,9 +139,8 @@ def get_allowed_cors_origins() -> List[str]:
     """
     Parses ALLOWED_ORIGINS env variable safely, providing secure defaults for Telegram WebApp.
     """
-    custom = os.getenv("ALLOWED_ORIGINS", "").strip()
-    if custom:
-        return [o.strip() for o in custom.split(",") if o.strip()]
+    if settings.cors_origins:
+        return settings.cors_origins
 
     # Secure default: Telegram official domains + localhost for dev
     return [

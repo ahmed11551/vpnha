@@ -2,10 +2,11 @@
 Business logic and service layer for NexusVPN ecosystem.
 Centralizes:
 - User lifecycle & referral attribution (shared between FastAPI and Bot)
-- Payment invoice generation & signature-verified webhook processing (CryptoBot / Telegram Stars)
-- Automated referral commissions
+- Payment order creation, webhook verification & processing across CryptoBot, Stars, YooKassa
+- PromoCode validation, discount computation, and instant activation
+- Subscription creation, renewal, and Marzban VLESS Reality provisioning
+- Automatic expiration enforcement (disabling expired keys in Marzban core)
 - Telegram notification dispatch
-- Background subscription monitors
 """
 
 import hashlib
@@ -22,16 +23,24 @@ import httpx
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import PaymentTransaction, Referral, Subscription, User
+from models import Payment, PromoCode, Referral, Subscription, User
 from marzban_client import marzban_client
+from payments import get_payment_provider, InvoiceRequest
+from config import settings
 
 logger = logging.getLogger("NexusVPN-Services")
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-CRYPTO_BOT_TOKEN = os.getenv("CRYPTO_BOT_TOKEN", "")
-CRYPTO_BOT_NET = os.getenv("CRYPTO_BOT_NET", "mainnet")  # mainnet or testnet
-REFERRAL_BONUS_RUB = float(os.getenv("REFERRAL_BONUS_RUB", "100.0"))
-REFERRAL_PERCENT = float(os.getenv("REFERRAL_COMMISSION_PERCENT", "15.0"))
+BOT_TOKEN = settings.BOT_TOKEN
+CRYPTO_BOT_TOKEN = settings.CRYPTO_BOT_TOKEN or ""
+REFERRAL_BONUS_RUB = settings.REFERRAL_BONUS_RUB
+REFERRAL_PERCENT = settings.REFERRAL_COMMISSION_PERCENT
+
+SUBSCRIPTION_PLANS = {
+    "1m": {"name": "1 Месяц", "days": 30, "price": 199.0, "popular": False},
+    "3m": {"name": "3 Месяца", "days": 90, "price": 499.0, "popular": False},
+    "6m": {"name": "6 Месяцев", "days": 180, "price": 899.0, "popular": True},
+    "12m": {"name": "12 Месяцев", "days": 365, "price": 1499.0, "popular": False},
+}
 
 
 # --------------------------------------------------------------------------
@@ -125,9 +134,7 @@ async def award_referral_bonus_on_purchase(
     purchase_amount: float,
     bot_token: Optional[str] = None,
 ) -> float:
-    """
-    Awards referral commission to the inviter when user completes a purchase.
-    """
+    """Awards referral commission to the inviter when user completes a purchase."""
     if not user.invited_by:
         return 0.0
 
@@ -155,7 +162,6 @@ async def award_referral_bonus_on_purchase(
         await db.commit()
         logger.info("Awarded referral bonus %.2f RUB to inviter %s", bonus, inviter.telegram_id)
 
-        # Notify inviter via Telegram bot
         token_to_use = bot_token or BOT_TOKEN
         if token_to_use:
             msg = (
@@ -196,80 +202,147 @@ async def send_telegram_message(telegram_id: int, text: str, bot_token: Optional
 
 
 # --------------------------------------------------------------------------
-# Payment Gateway Services: CryptoBot & Telegram Stars
+# Promo Code Engine
 # --------------------------------------------------------------------------
 
-async def create_crypto_bot_invoice(
-    amount_rub: float,
-    order_id: str,
-    description: str = "Пополнение баланса NexusVPN",
+async def validate_and_apply_promocode(
+    db: AsyncSession,
+    user: User,
+    code_text: str,
 ) -> Dict[str, Any]:
     """
-    Creates an official invoice on @CryptoBot (Crypto Pay API).
-    Docs: https://help.crypt.bot/crypto-pay-api
+    Validates a promo code and applies either instant bonuses (balance/free days)
+    or returns discount details for checkout.
     """
-    token = os.getenv("CRYPTO_BOT_TOKEN", "").strip()
-    base_api = "https://pay.crypt.bot/api" if CRYPTO_BOT_NET == "mainnet" else "https://testnet-pay.crypt.bot/api"
+    clean_code = code_text.strip().upper()
+    stmt = select(PromoCode).where(PromoCode.code == clean_code, PromoCode.is_active == True)
+    promo = (await db.execute(stmt)).scalar_one_or_none()
 
-    if not token:
-        # Return fallback demo invoice link
-        return {
-            "invoice_id": f"demo_{order_id}",
-            "pay_url": f"https://t.me/CryptoBot?start=invoice_{order_id}",
-            "amount": amount_rub,
-            "currency": "RUB",
-            "is_mock": True,
-        }
+    now = datetime.utcnow()
+    if not promo:
+        return {"valid": False, "message": "Промокод не существует или отключен"}
 
-    url = f"{base_api}/createInvoice"
-    headers = {"Crypto-Pay-API-Token": token}
-    payload = {
-        "currency_type": "fiat",
-        "fiat": "RUB",
-        "amount": f"{amount_rub:.2f}",
-        "description": description,
-        "payload": order_id,
-        "paid_btn_name": "callback",
-        "paid_btn_url": f"https://t.me/{os.getenv('BOT_USERNAME', 'NexusVpnBot')}",
-    }
+    if promo.expires_at and promo.expires_at < now:
+        return {"valid": False, "message": "Срок действия промокода истёк"}
 
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(url, json=payload, headers=headers)
-            data = resp.json()
-            if data.get("ok"):
-                result = data.get("result", {})
-                return {
-                    "invoice_id": str(result.get("invoice_id")),
-                    "pay_url": result.get("bot_invoice_url") or result.get("mini_app_invoice_url") or result.get("web_app_invoice_url"),
-                    "amount": amount_rub,
-                    "currency": "RUB",
-                    "is_mock": False,
-                }
-            logger.error("CryptoBot createInvoice error: %s", data)
-    except Exception as exc:
-        logger.error("CryptoBot connection error: %s", exc)
+    if promo.current_activations >= promo.max_activations:
+        return {"valid": False, "message": "Лимит активаций этого промокода исчерпан"}
+
+    # If promo grants instant bonus balance
+    bonus_rub = promo.bonus_rub
+    bonus_days = promo.bonus_days
+    discount_pct = promo.discount_percent
+
+    message_parts = []
+    if bonus_rub > 0:
+        user.balance += bonus_rub
+        message_parts.append(f"+{bonus_rub:.0f} ₽ на баланс")
+
+    if bonus_days > 0:
+        # Check active subscription
+        sub_stmt = (
+            select(Subscription)
+            .where(Subscription.user_id == user.id, Subscription.is_active == True, Subscription.end_date > now)
+            .order_by(Subscription.end_date.desc())
+        )
+        active_sub = (await db.execute(sub_stmt)).scalar_one_or_none()
+        if active_sub:
+            active_sub.end_date += timedelta(days=bonus_days)
+            new_expire_ts = int(active_sub.end_date.timestamp())
+            await marzban_client.extend_user(user.marzban_username, new_expire_ts=new_expire_ts)
+            message_parts.append(f"+{bonus_days} дней к активной подписке")
+        else:
+            # Create promotional mini-subscription
+            end_date = now + timedelta(days=bonus_days)
+            expire_ts = int(end_date.timestamp())
+            marz_user = await marzban_client.create_user(
+                username=user.marzban_username,
+                expire_timestamp=expire_ts,
+                note=f"Promocode {clean_code}",
+            )
+            links = await marzban_client.get_user_links(user.marzban_username)
+            new_sub = Subscription(
+                user_id=user.id,
+                plan_name=f"Бонус ({clean_code})",
+                start_date=now,
+                end_date=end_date,
+                is_active=True,
+                subscription_url=links.get("subscription_url"),
+                vless_link=links.get("primary_vless_link"),
+            )
+            db.add(new_sub)
+            message_parts.append(f"+{bonus_days} бесплатных дней VPN")
+
+    promo.current_activations += 1
+    await db.commit()
+    await db.refresh(user)
+
+    result_msg = "Промокод успешно применён! " + ", ".join(message_parts) if message_parts else f"Скидка {discount_pct:.0f}% активна для покупки тарифа"
 
     return {
-        "invoice_id": f"fallback_{order_id}",
-        "pay_url": f"https://t.me/CryptoBot?start={order_id}",
-        "amount": amount_rub,
-        "currency": "RUB",
-        "is_mock": True,
+        "valid": True,
+        "promo_id": promo.id,
+        "code": promo.code,
+        "discount_percent": discount_pct,
+        "bonus_days": bonus_days,
+        "bonus_rub": bonus_rub,
+        "message": result_msg,
+        "new_balance": user.balance,
     }
 
 
-def verify_crypto_bot_webhook(raw_body: bytes, signature: str, token: str) -> bool:
-    """
-    Verifies @CryptoBot webhook signature:
-    HMAC-SHA256 of raw body with SHA256(token) as secret key.
-    """
-    if not token or not signature:
-        return False
+# --------------------------------------------------------------------------
+# Payment Order & Processing Architecture
+# --------------------------------------------------------------------------
 
-    secret_key = hashlib.sha256(token.encode("utf-8")).digest()
-    calculated_signature = hmac.new(secret_key, raw_body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(calculated_signature, signature)
+async def create_payment_order(
+    db: AsyncSession,
+    user: User,
+    amount: float,
+    gateway: str,
+    plan_id: Optional[str] = None,
+    promo_code_id: Optional[int] = None,
+    description: Optional[str] = None,
+) -> Tuple[Payment, str]:
+    """
+    Creates a Payment record and initiates an invoice with the chosen gateway.
+    Returns: (Payment, pay_url)
+    """
+    order_id = f"ord_{int(time.time())}_{secrets.token_hex(4)}"
+    desc = description or (f"Тариф {SUBSCRIPTION_PLANS.get(plan_id, {}).get('name', plan_id)}" if plan_id else "Пополнение баланса NexusVPN")
+
+    provider = get_payment_provider(gateway)
+    invoice_req = InvoiceRequest(
+        order_id=order_id,
+        user_id=user.id,
+        telegram_id=user.telegram_id,
+        amount=amount,
+        currency="RUB",
+        description=desc,
+        plan_id=plan_id,
+    )
+
+    invoice_res = await provider.create_invoice(invoice_req)
+
+    payment = Payment(
+        user_id=user.id,
+        order_id=order_id,
+        gateway=gateway,
+        amount=amount,
+        currency=invoice_res.currency,
+        status="pending",
+        plan_id=plan_id,
+        promo_code_id=promo_code_id,
+        external_invoice_id=invoice_res.external_invoice_id,
+        pay_url=invoice_res.pay_url,
+        meta_data=json.dumps(invoice_res.meta_data) if invoice_res.meta_data else None,
+        created_at=datetime.utcnow(),
+    )
+    db.add(payment)
+    await db.commit()
+    await db.refresh(payment)
+
+    return payment, invoice_res.pay_url
 
 
 async def process_successful_payment(
@@ -277,59 +350,164 @@ async def process_successful_payment(
     order_id: str,
     gateway: str,
     external_id: Optional[str] = None,
-) -> Optional[PaymentTransaction]:
+) -> Optional[Payment]:
     """
-    Safely and idempotently credits user balance and marks transaction as paid.
+    Safely and idempotently credits user balance or activates purchased plan.
+    Marks payment as paid.
     """
-    stmt = select(PaymentTransaction).where(PaymentTransaction.order_id == order_id)
-    tx = (await db.execute(stmt)).scalar_one_or_none()
+    stmt = select(Payment).where(Payment.order_id == order_id)
+    payment = (await db.execute(stmt)).scalar_one_or_none()
 
-    if not tx:
-        logger.error("Payment transaction not found for order_id: %s", order_id)
+    if not payment:
+        logger.error("Payment record not found for order_id: %s", order_id)
         return None
 
     # Idempotency check: if already processed, return existing
-    if tx.status == "paid":
+    if payment.status == "paid":
         logger.info("Order %s already processed (idempotent skipped)", order_id)
-        return tx
+        return payment
 
-    tx.status = "paid"
-    tx.paid_at = datetime.utcnow()
+    payment.status = "paid"
+    payment.paid_at = datetime.utcnow()
     if external_id:
-        tx.external_invoice_id = external_id
+        payment.external_invoice_id = external_id
 
-    # Credit user balance
-    user_stmt = select(User).where(User.id == tx.user_id)
+    # User lookup
+    user_stmt = select(User).where(User.id == payment.user_id)
     user = (await db.execute(user_stmt)).scalar_one_or_none()
-    if user:
-        user.balance += tx.amount
+    if not user:
         await db.commit()
-        await db.refresh(tx)
-        await db.refresh(user)
+        return payment
 
-        logger.info("Payment confirmed! User %s credited with %.2f %s. New balance: %.2f",
-                    user.telegram_id, tx.amount, tx.currency, user.balance)
+    # If payment was for a specific plan, automatically activate it
+    if payment.plan_id and payment.plan_id in SUBSCRIPTION_PLANS:
+        plan = SUBSCRIPTION_PLANS[payment.plan_id]
+        logger.info("Auto-activating plan %s for user %s after direct payment", payment.plan_id, user.telegram_id)
+        sub = await purchase_subscription_internal(db, user, payment.plan_id, deduct_balance=False)
+        await award_referral_bonus_on_purchase(db, user, payment.amount)
+        await db.commit()
+        await db.refresh(payment)
 
-        # Send push notification
         msg = (
-            f"✅ <b>Баланс успешно пополнен!</b>\n\n"
-            f"Сумма: <b>+{tx.amount:.2f} ₽</b> ({gateway.upper()})\n"
-            f"Текущий баланс: <b>{user.balance:.2f} ₽</b>\n\n"
-            f"Теперь вы можете оформить или продлить подписку в меню бота или Mini App."
+            f"🎉 <b>Оплата прошла успешно!</b>\n\n"
+            f"Тариф <b>{plan['name']}</b> активирован на {plan['days']} дней.\n"
+            f"Ваш персональный VLESS Reality ключ обновлён в приложении!"
         )
         await send_telegram_message(user.telegram_id, msg)
+        return payment
 
-    return tx
+    # Otherwise credit user balance
+    user.balance += payment.amount
+    await db.commit()
+    await db.refresh(payment)
+    await db.refresh(user)
+
+    logger.info("Payment confirmed! User %s credited with %.2f %s. New balance: %.2f",
+                user.telegram_id, payment.amount, payment.currency, user.balance)
+
+    msg = (
+        f"✅ <b>Баланс успешно пополнен!</b>\n\n"
+        f"Сумма: <b>+{payment.amount:.2f} ₽</b> ({gateway.upper()})\n"
+        f"Текущий баланс: <b>{user.balance:.2f} ₽</b>\n\n"
+        f"Теперь вы можете оформить или продлить подписку в меню бота или Mini App."
+    )
+    await send_telegram_message(user.telegram_id, msg)
+
+    return payment
 
 
 # --------------------------------------------------------------------------
-# Background Monitor for Expiring Subscriptions
+# Subscription Purchase & Marzban Integration
+# --------------------------------------------------------------------------
+
+async def purchase_subscription_internal(
+    db: AsyncSession,
+    user: User,
+    plan_id: str,
+    deduct_balance: bool = True,
+    promo_code_obj: Optional[PromoCode] = None,
+) -> Subscription:
+    """Internal core routine to provision/extend subscription in Marzban and DB."""
+    if plan_id not in SUBSCRIPTION_PLANS:
+        raise ValueError(f"Unknown plan_id: {plan_id}")
+
+    plan = SUBSCRIPTION_PLANS[plan_id]
+    base_price = plan["price"]
+    bonus_days = 0
+
+    if promo_code_obj:
+        if promo_code_obj.discount_percent > 0:
+            base_price = round(base_price * (1.0 - promo_code_obj.discount_percent / 100.0), 2)
+        bonus_days = promo_code_obj.bonus_days
+
+    total_days = plan["days"] + bonus_days
+
+    if deduct_balance:
+        if user.balance < base_price:
+            raise ValueError(f"Недостаточно средств на балансе. Требуется: {base_price:.2f} ₽, на балансе: {user.balance:.2f} ₽")
+        user.balance -= base_price
+
+    now = datetime.utcnow()
+    # Check active subscription
+    sub_stmt = (
+        select(Subscription)
+        .where(Subscription.user_id == user.id, Subscription.is_active == True, Subscription.end_date > now)
+        .order_by(Subscription.end_date.desc())
+    )
+    active_sub = (await db.execute(sub_stmt)).scalar_one_or_none()
+
+    if active_sub:
+        start_base = max(active_sub.end_date, now)
+        new_end_date = start_base + timedelta(days=total_days)
+        active_sub.end_date = new_end_date
+        active_sub.plan_name = plan["name"]
+        target_sub = active_sub
+    else:
+        new_end_date = now + timedelta(days=total_days)
+        target_sub = Subscription(
+            user_id=user.id,
+            plan_name=plan["name"],
+            start_date=now,
+            end_date=new_end_date,
+            is_active=True,
+        )
+        db.add(target_sub)
+
+    # Synchronize with Marzban panel
+    expire_timestamp = int(new_end_date.timestamp())
+    try:
+        marz_user = await marzban_client.create_user(
+            username=user.marzban_username,
+            expire_timestamp=expire_timestamp,
+            note=f"NexusVPN plan {plan['name']} (tg: {user.telegram_id})",
+        )
+        marz_links = await marzban_client.get_user_links(user.marzban_username)
+        target_sub.subscription_url = marz_links.get("subscription_url")
+        target_sub.vless_link = marz_links.get("primary_vless_link")
+    except Exception as exc:
+        logger.error("Marzban sync error during purchase: %s", exc)
+        # Resilient fallback mock link
+        if not target_sub.vless_link:
+            mock = marzban_client._generate_mock_user(user.marzban_username, expire_timestamp)
+            target_sub.vless_link = mock["links"][0]
+            target_sub.subscription_url = mock["subscription_url"]
+
+    await db.commit()
+    await db.refresh(target_sub)
+    await db.refresh(user)
+
+    if deduct_balance:
+        await award_referral_bonus_on_purchase(db, user, base_price)
+
+    return target_sub
+
+
+# --------------------------------------------------------------------------
+# Background Monitors: Reminders & Hard Expired Disabling
 # --------------------------------------------------------------------------
 
 async def check_expiring_subscriptions(db: AsyncSession) -> int:
-    """
-    Checks for subscriptions expiring in less than 24 hours and sends renewal reminders.
-    """
+    """Checks for subscriptions expiring in less than 24 hours and sends renewal reminders."""
     now = datetime.utcnow()
     target_window = now + timedelta(hours=24)
 
@@ -357,3 +535,55 @@ async def check_expiring_subscriptions(db: AsyncSession) -> int:
         count += 1
 
     return count
+
+
+async def check_and_disable_expired_subscriptions(db: AsyncSession) -> int:
+    """
+    Finds all expired active subscriptions, marks them is_active=False in DB,
+    and calls Marzban to disable user access (status: 'disabled').
+    """
+    now = datetime.utcnow()
+    stmt = (
+        select(Subscription, User)
+        .join(User, Subscription.user_id == User.id)
+        .where(
+            Subscription.is_active == True,
+            Subscription.end_date <= now,
+        )
+    )
+    results = (await db.execute(stmt)).all()
+    disabled_count = 0
+
+    for sub, user in results:
+        sub.is_active = False
+        # Disable in Marzban
+        try:
+            await marzban_client.disable_user(user.marzban_username)
+            logger.info("Disabled Marzban user %s due to expired subscription", user.marzban_username)
+        except Exception as exc:
+            logger.warning("Could not disable Marzban user %s: %s", user.marzban_username, exc)
+
+        msg = (
+            f"🛑 <b>Срок действия вашей подписки NexusVPN истёк</b>\n\n"
+            f"Тариф: <b>{sub.plan_name}</b>\n"
+            f"Доступ к VPN-серверам временно приостановлен.\n\n"
+            f"Чтобы возобновить подключение, продлите подписку в Mini App!"
+        )
+        await send_telegram_message(user.telegram_id, msg)
+        disabled_count += 1
+
+    if disabled_count > 0:
+        await db.commit()
+        logger.info("Successfully marked and disabled %d expired subscriptions", disabled_count)
+
+    return disabled_count
+
+
+# Backward-compatibility alias
+create_crypto_bot_invoice = None
+def verify_crypto_bot_webhook(raw_body: bytes, signature: str, token: str) -> bool:
+    if not token or not signature:
+        return False
+    secret_key = hashlib.sha256(token.encode("utf-8")).digest()
+    calculated_signature = hmac.new(secret_key, raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(calculated_signature, signature)

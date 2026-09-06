@@ -1,10 +1,10 @@
 """
 SQLAlchemy ORM models for VPN commercial ecosystem:
-User, Subscription, and Referral.
+User, Subscription, Referral, PromoCode, and Payment.
 """
 
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -46,9 +46,14 @@ class User(Base):
         back_populates="referrer",
         cascade="all, delete-orphan",
     )
-    transactions: Mapped[List["PaymentTransaction"]] = relationship(
-        "PaymentTransaction", back_populates="user", cascade="all, delete-orphan"
+    payments: Mapped[List["Payment"]] = relationship(
+        "Payment", back_populates="user", cascade="all, delete-orphan"
     )
+
+    @property
+    def transactions(self) -> List["Payment"]:
+        """Backward compatibility alias."""
+        return self.payments
 
 
 class Subscription(Base):
@@ -85,21 +90,46 @@ class Referral(Base):
     referee: Mapped["User"] = relationship("User", foreign_keys=[referee_id])
 
 
-class PaymentTransaction(Base):
-    __tablename__ = "payment_transactions"
+class PromoCode(Base):
+    __tablename__ = "promocodes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    discount_percent: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    bonus_days: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    bonus_rub: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    max_activations: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
+    current_activations: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True, nullable=False)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Relationships
+    payments: Mapped[List["Payment"]] = relationship("Payment", back_populates="promo_code")
+
+
+class Payment(Base):
+    __tablename__ = "payments"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True, nullable=False)
     order_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
-    gateway: Mapped[str] = mapped_column(String(32), default="cryptobot", nullable=False)  # cryptobot, stars, yookassa
+    gateway: Mapped[str] = mapped_column(String(32), default="cryptobot", index=True, nullable=False)  # cryptobot, stars, yookassa
     amount: Mapped[float] = mapped_column(Float, nullable=False)
     currency: Mapped[str] = mapped_column(String(16), default="RUB", nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="pending", index=True, nullable=False)  # pending, paid, expired, failed
-    external_invoice_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    plan_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)  # if direct plan purchase
+    promo_code_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("promocodes.id"), nullable=True)
+    external_invoice_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     pay_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    meta_data: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON-string with extra provider data
 
-    # Relationship
-    user: Mapped["User"] = relationship("User", back_populates="transactions")
+    # Relationships
+    user: Mapped["User"] = relationship("User", back_populates="payments")
+    promo_code: Mapped[Optional["PromoCode"]] = relationship("PromoCode", back_populates="payments")
 
+
+# Backward compatibility alias
+PaymentTransaction = Payment
